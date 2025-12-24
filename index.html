@@ -41,6 +41,7 @@
   .toolbar .actions { display:flex; gap:8px; }
   .kbd { border:1px solid var(--border); border-bottom-width:3px; padding:2px 6px; border-radius:6px; font-size:12px; color:#b7c3d9; }
   footer { padding:16px; text-align:center; color:var(--muted); }
+  .signature { margin-top:6px; font-style:italic; color:var(--accent); text-align:center; }
   @media (max-width:900px) { .cols-4 { grid-template-columns:1fr 1fr; } }
   @media (max-width:600px) { .cols-3, .cols-2, .cols-4 { grid-template-columns:1fr; } nav { display:flex; flex-wrap:wrap; } }
 </style>
@@ -54,13 +55,20 @@
       <line x1="20" y1="85" x2="380" y2="85" stroke="#79d88a" stroke-width="6" stroke-linecap="round"/>
       <text x="200" y="110" font-family="Segoe UI, sans-serif" font-size="28" text-anchor="middle" fill="#e8ecf1" font-weight="bold">Agrawal Footwear</text>
     </svg>
-    <h1>CRM + Inventory</h1>
+    <div>
+      <h1>CRM + Inventory</h1>
+      <!-- Optional header tagline (kept subtle) -->
+      <div class="signature" style="font-size:12px;">Developed and managed By Shravan Agrawal</div>
+    </div>
   </div>
   <nav id="nav"></nav>
 </header>
 
 <main id="app"></main>
-<footer>Local-first. Offline-ready. IndexedDB storage. Single-file. Installable (PWA).</footer>
+<footer>
+  Local-first. Offline-ready. IndexedDB storage. Single-file. Installable (PWA).
+  <div class="signature">Developed and managed By Shravan Agrawal</div>
+</footer>
 
 <script>
 /* =========================================================
@@ -831,7 +839,6 @@ const Actions = {
         const req = e.request;
         e.respondWith(
           caches.match(req).then(res => res || fetch(req).then(net => {
-            // Cache same-origin GET requests
             if (req.method === 'GET' && new URL(req.url).origin === location.origin) {
               const copy = net.clone();
               caches.open(CACHE_NAME).then(c=>c.put(req, copy));
@@ -845,7 +852,6 @@ const Actions = {
     const swURL = URL.createObjectURL(swBlob);
 
     if ('serviceWorker' in navigator) {
-      // Note: Some browsers require a real URL path for SW; blob may fail.
       navigator.serviceWorker.register(swURL).then(()=> {
         console.log("Service worker registered");
       }).catch(err => {
