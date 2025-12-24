@@ -13,7 +13,7 @@
 <style>
   :root { --bg:#0f1220; --fg:#e8ecf1; --muted:#a8b0c2; --card:#171a2b; --accent:#5bd1ff; --danger:#ff6b6b; --ok:#79d88a; --border:#2a2f48; }
   * { box-sizing:border-box; }
-  body { margin:0; font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial; background:var(--bg); color:var(--fg); }
+  body { margin:0; font-family:Segoe UI, sans-serif; background:var(--bg); color:var(--fg); }
   header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:10; }
   .brand { display:flex; align-items:center; gap:10px; }
   .brand h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:0.3px; }
@@ -21,14 +21,7 @@
   nav a.active { color:var(--accent); font-weight:600; }
   main { max-width:1100px; margin: 16px auto; padding: 0 16px; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin:12px 0; }
-  .grid { display:grid; gap:12px; }
-  .cols-2 { grid-template-columns:1fr 1fr; }
-  .cols-3 { grid-template-columns:1fr 1fr 1fr; }
-  .cols-4 { grid-template-columns:repeat(4,1fr); }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
-  input, select, textarea, button { background:#121528; border:1px solid var(--border); color:var(--fg); border-radius:8px; padding:10px; font-size:14px; }
-  button { cursor:pointer; }
+  input, select, button { background:#121528; border:1px solid var(--border); color:var(--fg); border-radius:8px; padding:10px; font-size:14px; }
   button.primary { background:linear-gradient(90deg,#5bd1ff,#7ef8d7); color:#04121a; border:none; font-weight:600; }
   button.ghost { background:transparent; border:1px solid var(--border); }
   table { width:100%; border-collapse:collapse; margin-top:8px; }
@@ -66,66 +59,85 @@
 </footer>
 
 <script>
-// ... (all your existing DB, Auth, Svc, Views, Actions code remains unchanged)
+/* =========================================================
+   Agrawal Footwear — Serverless CRM + Inventory
+   Includes: Login/Register, CRM, Inventory, Sales, PDF Invoice
+   ========================================================= */
 
-// Extend Actions with PDF generation
-Actions.downloadInvoicePDF = async function(invId){
-  try {
-    const { jsPDF } = window.jspdf;
-    const inv = await Svc.listInvoices().then(list => list.find(i=>i.id===invId));
-    if(!inv) throw new Error("Invoice not found");
-    const so = await Svc.listSalesOrders().then(list => list.find(s=>s.id===inv.soId));
-    const acc = await Svc.listAccounts().then(list => list.find(a=>a.id===so.accountId));
-    const lines = so.lines || [];
+// ---------- Utilities ----------
+const UI = {
+  el(id){ return document.getElementById(id); },
+  html(id, html){ document.getElementById(id).innerHTML = html; },
+  notify(msg, type="ok"){
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML = `<span class="pill ${type}">${type.toUpperCase()}</span> ${msg}`;
+    document.querySelector("main").prepend(div);
+    setTimeout(()=>div.remove(), 2500);
+  },
+  uid(){ return crypto.randomUUID(); },
+  route(){ return location.hash.replace("#","")||"home"; }
+};
 
-    const doc = new jsPDF();
+// ---------- Auth ----------
+const Auth = {
+  tokenKey: "af_token",
+  userKey: "af_user",
+  roles: ["Admin","Manager","Sales","Warehouse","Accountant","ReadOnly"],
+  current(){ const u = localStorage.getItem(this.userKey); return u ? JSON.parse(u) : null; },
+  set(user){ localStorage.setItem(this.userKey, JSON.stringify(user)); localStorage.setItem(this.tokenKey, "token-"+UI.uid()); },
+  clear(){ localStorage.removeItem(this.userKey); localStorage.removeItem(this.tokenKey); }
+};
 
-    // Shop header
-    doc.setFontSize(16);
-    doc.text("Agrawal Footwear", 20, 20);
-    doc.setFontSize(12);
-    doc.text("Main Market, Birsinghpur, Satna, Madhya Pradesh 485226", 20, 28);
-
-    // Customer details
-    doc.setFontSize(14);
-    doc.text("Invoice: " + inv.id.slice(0,8), 20, 40);
-    doc.text("Customer: " + (acc?.name || "Unknown"), 20, 48);
-
-    // Items
-    let y = 60;
-    doc.setFontSize(12);
-    doc.text("Items:", 20, y);
-    y += 8;
-    lines.forEach(l=>{
-      doc.text(`${l.qty} x ${l.price} = ${l.qty*l.price}`, 25, y);
-      y += 8;
+// ---------- IndexedDB ----------
+const DB = {
+  name: "af_crm_inventory_db",
+  version: 1,
+  db: null,
+  async init(){
+    if(this.db) return this.db;
+    this.db = await new Promise((resolve, reject)=>{
+      const req = indexedDB.open(this.name, this.version);
+      req.onupgradeneeded = (e)=>{
+        const db = e.target.result;
+        db.createObjectStore("users", { keyPath: "id" });
+        db.createObjectStore("accounts", { keyPath: "id" });
+        db.createObjectStore("contacts", { keyPath: "id" });
+        db.createObjectStore("products", { keyPath: "id" });
+        db.createObjectStore("skus", { keyPath: "id" });
+        db.createObjectStore("warehouses", { keyPath: "id" });
+        db.createObjectStore("stock", { keyPath: "id" });
+        db.createObjectStore("salesOrders", { keyPath: "id" });
+        db.createObjectStore("salesOrderLines", { keyPath: "id" });
+        db.createObjectStore("invoices", { keyPath: "id" });
+      };
+      req.onsuccess = ()=>resolve(req.result);
+      req.onerror = ()=>reject(req.error);
     });
-    doc.text("Total: " + inv.total, 20, y+10);
-
-    // QR code
-    const qrData = `
-      Shop: Agrawal Footwear
-      Address: Main Market, Birsinghpur, Satna, Madhya Pradesh 485226
-      Invoice: ${inv.id}
-      Customer: ${acc?.name||""}
-      Total: ${inv.total}
-    `;
-    const qrDiv = document.createElement("div");
-    new QRCode(qrDiv, { text: qrData, width: 128, height: 128 });
-    const qrCanvas = qrDiv.querySelector("canvas");
-    const qrDataUrl = qrCanvas.toDataURL("image/png");
-    doc.addImage(qrDataUrl, "PNG", 150, 40, 50, 50);
-
-    doc.save(`Invoice_${inv.id.slice(0,8)}.pdf`);
-  } catch(e){
-    UI.notify(e.message,"bad");
+    return this.db;
+  },
+  async tx(storeNames, mode="readonly"){
+    const db = await this.init();
+    return db.transaction(storeNames, mode);
+  },
+  async put(store, obj){
+    const tx = await this.tx([store], "readwrite");
+    tx.objectStore(store).put(obj);
+  },
+  async add(store, obj){
+    const tx = await this.tx([store], "readwrite");
+    tx.objectStore(store).add(obj);
+  },
+  async all(store){
+    const tx = await this.tx([store], "readonly");
+    return new Promise(res=>{ tx.objectStore(store).getAll().onsuccess=e=>res(e.target.result||[]); });
   }
 };
 
-// In Views.sales(), add Download PDF button for each invoice row
-// Example snippet inside invoice table row:
-{/* <button class="ghost" onclick="Actions.downloadInvoicePDF('${inv.id}')">Download PDF</button> */}
-
-</script>
-</body>
-</html>
+// ---------- Services ----------
+const Svc = {
+  async register({name,email,password,role}){
+    const users = await DB.all("users");
+    if(users.find(u=>u.email===email)) throw new Error("Email exists");
+    const user = { id:UI.uid(), name, email, role, passwordHash:btoa(password) };
+    await DB.add("users", user); return user
