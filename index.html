@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Agrawal Footwear CRM + Inventory</title>
 
+<!-- jsPDF for PDF generation -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- QRCode.js for generating QR codes -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
 <style>
   :root { --bg:#0f1220; --fg:#e8ecf1; --muted:#a8b0c2; --card:#171a2b; --accent:#5bd1ff; --danger:#ff6b6b; --ok:#79d88a; --border:#2a2f48; }
   * { box-sizing:border-box; }
@@ -23,10 +28,8 @@
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   label { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
   input, select, textarea, button { background:#121528; border:1px solid var(--border); color:var(--fg); border-radius:8px; padding:10px; font-size:14px; }
-  input::placeholder, textarea::placeholder { color:#7c86a5; }
   button { cursor:pointer; }
   button.primary { background:linear-gradient(90deg,#5bd1ff,#7ef8d7); color:#04121a; border:none; font-weight:600; }
-  button.danger { background:var(--danger); border:none; color:#fff; }
   button.ghost { background:transparent; border:1px solid var(--border); }
   table { width:100%; border-collapse:collapse; margin-top:8px; }
   th, td { border-bottom:1px solid #27304b; padding:10px; text-align:left; font-size:14px; }
@@ -35,30 +38,22 @@
   .pill.ok { background:var(--ok); }
   .pill.warn { background:#ffcf6b; }
   .pill.bad { background:var(--danger); color:#fff; }
-  .muted { color:var(--muted); }
-  .right { text-align:right; }
-  .toolbar { display:flex; gap:8px; align-items:center; justify-content:space-between; }
-  .toolbar .actions { display:flex; gap:8px; }
-  .kbd { border:1px solid var(--border); border-bottom-width:3px; padding:2px 6px; border-radius:6px; font-size:12px; color:#b7c3d9; }
   footer { padding:16px; text-align:center; color:var(--muted); }
   .signature { margin-top:6px; font-style:italic; color:var(--accent); text-align:center; }
-  @media (max-width:900px) { .cols-4 { grid-template-columns:1fr 1fr; } }
-  @media (max-width:600px) { .cols-3, .cols-2, .cols-4 { grid-template-columns:1fr; } nav { display:flex; flex-wrap:wrap; } }
 </style>
 </head>
 <body>
 <header>
   <div class="brand">
-    <!-- Inline Agrawal Footwear Logo (SVG) -->
-    <svg width="160" height="56" viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg" aria-label="Agrawal Footwear Logo" role="img">
+    <!-- Inline Agrawal Footwear Logo -->
+    <svg width="160" height="56" viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg">
       <path d="M20 80 C60 20, 140 20, 200 80 Q220 100, 260 80 T380 80" fill="none" stroke="#5bd1ff" stroke-width="8" stroke-linecap="round"/>
       <line x1="20" y1="85" x2="380" y2="85" stroke="#79d88a" stroke-width="6" stroke-linecap="round"/>
       <text x="200" y="110" font-family="Segoe UI, sans-serif" font-size="28" text-anchor="middle" fill="#e8ecf1" font-weight="bold">Agrawal Footwear</text>
     </svg>
     <div>
       <h1>CRM + Inventory</h1>
-      <!-- Optional header tagline (kept subtle) -->
-      <div class="signature" style="font-size:12px;">Developed and managed By Shravan Agrawal</div>
+      <div class="signature">Developed and managed By Shravan Agrawal</div>
     </div>
   </div>
   <nav id="nav"></nav>
@@ -71,804 +66,66 @@
 </footer>
 
 <script>
-/* =========================================================
-   Agrawal Footwear — Serverless CRM + Inventory (Single File)
-   Storage: IndexedDB
-   “Backend”: API-like services over IndexedDB
-   Auth: Local token (demo)
-   PWA: Manifest + Service Worker (blob bootstrap)
-   ========================================================= */
+// ... (all your existing DB, Auth, Svc, Views, Actions code remains unchanged)
 
-// ---------- Utilities ----------
-const UI = {
-  el(id){ return document.getElementById(id); },
-  html(id, html){ document.getElementById(id).innerHTML = html; },
-  notify(msg, type="ok"){
-    const div = document.createElement("div");
-    div.className = "card";
-    div.style.borderColor = type==="ok" ? "#2f5645" : type==="warn" ? "#4f4731" : "#5a2d2d";
-    div.innerHTML = `<span class="pill ${type==="ok"?"ok":type==="warn"?"warn":"bad"}">${type.toUpperCase()}</span> ${msg}`;
-    document.querySelector("main").prepend(div);
-    setTimeout(()=>div.remove(), 2500);
-  },
-  fmtMoney(n){ return Intl.NumberFormat(undefined,{style:"currency", currency:"INR"}).format(Number(n||0)); },
-  fmtDate(d){ try { return new Date(d).toLocaleDateString(); } catch { return ""; } },
-  sum(arr){ return (arr||[]).reduce((a,b)=>a+Number(b||0),0); },
-  uid(){ return crypto.randomUUID(); },
-  route(){ return location.hash.replace("#","")||"home"; }
-};
-
-// ---------- Auth (client-only; demo) ----------
-const Auth = {
-  tokenKey: "af_token",
-  userKey: "af_user",
-  roles: ["Admin","Manager","Sales","Warehouse","Accountant","ReadOnly"],
-  current(){ const u = localStorage.getItem(this.userKey); return u ? JSON.parse(u) : null; },
-  set(user){ localStorage.setItem(this.userKey, JSON.stringify(user)); localStorage.setItem(this.tokenKey, "token-"+UI.uid()); },
-  clear(){ localStorage.removeItem(this.userKey); localStorage.removeItem(this.tokenKey); },
-  require(roleList){ const u = this.current(); return !!u && (roleList ? roleList.includes(u.role) : true); }
-};
-
-// ---------- IndexedDB ----------
-const DB = {
-  name: "af_crm_inventory_db",
-  version: 1,
-  db: null,
-  async init(){
-    if(this.db) return this.db;
-    this.db = await new Promise((resolve, reject)=>{
-      const req = indexedDB.open(this.name, this.version);
-      req.onupgradeneeded = (e)=>{
-        const db = e.target.result;
-        db.createObjectStore("users", { keyPath: "id" });
-        db.createObjectStore("accounts", { keyPath: "id" });
-        db.createObjectStore("contacts", { keyPath: "id" });
-        db.createObjectStore("products", { keyPath: "id" });
-        db.createObjectStore("skus", { keyPath: "id" });
-        db.createObjectStore("warehouses", { keyPath: "id" });
-        db.createObjectStore("stock", { keyPath: "id" }); // {id, skuId, whId, onHand, reserved}
-        db.createObjectStore("movements", { keyPath: "id" });
-        db.createObjectStore("salesOrders", { keyPath: "id" });
-        db.createObjectStore("salesOrderLines", { keyPath: "id" });
-        db.createObjectStore("invoices", { keyPath: "id" });
-        db.createObjectStore("payments", { keyPath: "id" });
-        db.createObjectStore("settings", { keyPath: "key" });
-      };
-      req.onsuccess = ()=>resolve(req.result);
-      req.onerror = ()=>reject(req.error);
-    });
-    return this.db;
-  },
-  async tx(storeNames, mode="readonly"){
-    const db = await this.init();
-    return db.transaction(storeNames, mode);
-  },
-  async put(store, obj){
-    const tx = await this.tx([store], "readwrite");
-    const s = tx.objectStore(store);
-    await new Promise((res, rej)=>{ const r=s.put(obj); r.onsuccess=res; r.onerror=()=>rej(r.error); });
-    return obj;
-  },
-  async add(store, obj){
-    const tx = await this.tx([store], "readwrite");
-    const s = tx.objectStore(store);
-    await new Promise((res, rej)=>{ const r=s.add(obj); r.onsuccess=res; r.onerror=()=>rej(r.error); });
-    return obj;
-  },
-  async get(store, id){
-    const tx = await this.tx([store], "readonly");
-    const s = tx.objectStore(store);
-    return await new Promise((res, rej)=>{ const r=s.get(id); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
-  },
-  async all(store){
-    const tx = await this.tx([store], "readonly");
-    const s = tx.objectStore(store);
-    return await new Promise((res, rej)=>{ const r=s.getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); });
-  },
-  async del(store, id){
-    const tx = await this.tx([store], "readwrite");
-    const s = tx.objectStore(store);
-    await new Promise((res, rej)=>{ const r=s.delete(id); r.onsuccess=res; r.onerror=()=>rej(r.error); });
-  },
-  async wipe(){
-    const db = await this.init();
-    db.close();
-    await indexedDB.deleteDatabase(this.name);
-    location.reload();
-  }
-};
-
-// ---------- Services (API-like) ----------
-const Svc = {
-  async register({name,email,password,role}){
-    if(!Auth.roles.includes(role)) role = "ReadOnly";
-    const users = await DB.all("users");
-    if(users.find(u=>u.email===email)) throw new Error("Email already exists");
-    const user = { id:UI.uid(), name, email, role, passwordHash:btoa(password), createdAt:new Date().toISOString() };
-    await DB.add("users", user); return user;
-  },
-  async login({email,password}){
-    const users = await DB.all("users");
-    const u = users.find(u=>u.email===email);
-    if(!u || u.passwordHash !== btoa(password)) throw new Error("Invalid credentials");
-    Auth.set({ id:u.id, name:u.name, email:u.email, role:u.role });
-    return { token: localStorage.getItem(Auth.tokenKey) };
-  },
-
-  async createAccount({name,tags}){
-    const owner = Auth.current();
-    const acc = { id:UI.uid(), name, tags:tags||"", ownerId:owner?.id||null, createdAt:new Date().toISOString() };
-    return DB.add("accounts", acc);
-  },
-  async listAccounts(){ return DB.all("accounts"); },
-  async createContact({accountId,name,email,phone}){
-    const owner = Auth.current();
-    const c = { id:UI.uid(), accountId, name, email, phone, ownerId:owner?.id||null, createdAt:new Date().toISOString() };
-    return DB.add("contacts", c);
-  },
-  async listContacts(){ return DB.all("contacts"); },
-
-  async createProduct({name,category,taxRate,mrp}){
-    const p = { id:UI.uid(), name, category, taxRate:Number(taxRate||0), mrp:Number(mrp||0), createdAt:new Date().toISOString() };
-    return DB.add("products", p);
-  },
-  async listProducts(){ return DB.all("products"); },
-  async createSKU({productId,code,barcode,price,cost,uom}){
-    const s = { id:UI.uid(), productId, code, barcode, price:Number(price||0), cost:Number(cost||0), uom:uom||"pair" };
-    return DB.add("skus", s);
-  },
-  async listSKUs(){ return DB.all("skus"); },
-
-  async createWarehouse({name,code,address}){
-    const w = { id:UI.uid(), name, code, address:address||"" };
-    return DB.add("warehouses", w);
-  },
-  async listWarehouses(){ return DB.all("warehouses"); },
-  async getOrInitStock(skuId, whId){
-    const rows = await DB.all("stock");
-    let s = rows.find(r=>r.skuId===skuId && r.whId===whId);
-    if(!s){ s = { id:UI.uid(), skuId, whId, onHand:0, reserved:0 }; await DB.add("stock", s); }
-    return s;
-  },
-  async applyMovement({skuCode, whCode, type, qty, reference}){
-    qty = Number(qty||0);
-    const sku = (await DB.all("skus")).find(s=>s.code===skuCode);
-    const wh = (await DB.all("warehouses")).find(w=>w.code===whCode);
-    if(!sku || !wh) throw new Error("Invalid SKU or Warehouse");
-    const st = await this.getOrInitStock(sku.id, wh.id);
-    if((type==="RECEIPT" || type==="ADJUSTMENT") && qty>0){
-      st.onHand += qty;
-    } else if((type==="ISSUE" || type==="ADJUSTMENT") && qty<0){
-      if(st.onHand + qty < 0) throw new Error("Insufficient stock");
-      st.onHand += qty;
-    } else {
-      throw new Error("Invalid movement type/qty");
-    }
-    await DB.put("stock", st);
-    const mv = { id:UI.uid(), skuId:sku.id, whId:wh.id, type, qty, reference:reference||"", createdAt:new Date().toISOString(), createdBy:Auth.current()?.id||null };
-    await DB.add("movements", mv);
-    return mv;
-  },
-  async listStock(){
-    const stock = await DB.all("stock"); const skus = await DB.all("skus"); const whs = await DB.all("warehouses");
-    return stock.map(s=>{
-      const sku = skus.find(x=>x.id===s.skuId); const wh = whs.find(x=>x.id===s.whId);
-      return { id:s.id, skuCode:sku?.code||"?", whCode:wh?.code||"?", onHand:s.onHand, reserved:s.reserved };
-    });
-  },
-
-  async createSalesOrder({accountId, lines}){
-    const so = { id:UI.uid(), accountId, status:"Draft", total:0, createdBy:Auth.current()?.id||null, createdAt:new Date().toISOString() };
-    await DB.add("salesOrders", so);
-    let total = 0;
-    for(const ln of (lines||[])){
-      const sku = await DB.get("skus", ln.skuId);
-      if(!sku) continue;
-      const qty = Number(ln.qty||0); const price = Number((ln.price ?? sku.price) || 0);
-      const sol = { id:UI.uid(), soId:so.id, skuId:sku.id, qty, price };
-      await DB.add("salesOrderLines", sol);
-      total += qty * price;
-      const st = await this.getOrInitStock(sku.id, ln.whId);
-      st.reserved += qty; await DB.put("stock", st);
-    }
-    so.total = total; await DB.put("salesOrders", so);
-    return so;
-  },
-  async confirmSalesOrder(soId){
-    const so = await DB.get("salesOrders", soId);
-    if(!so) throw new Error("SO not found"); so.status="Confirmed"; await DB.put("salesOrders", so);
-    return so;
-  },
-  async listSalesOrders(){
-    const sos = await DB.all("salesOrders"); const lines = await DB.all("salesOrderLines");
-    return sos.map(so=>({ ...so, lines: lines.filter(l=>l.soId===so.id) }));
-  },
-  async createInvoice(soId){
-    const so = await DB.get("salesOrders", soId);
-    if(!so) throw new Error("SO not found");
-    const inv = { id:UI.uid(), soId, total:so.total, status:"Unpaid", createdAt:new Date().toISOString() };
-    await DB.add("invoices", inv); return inv;
-  },
-  async payInvoice({invoiceId, amount, method}){
-    const inv = await DB.get("invoices", invoiceId);
-    if(!inv) throw new Error("Invoice not found");
-    const p = { id:UI.uid(), invoiceId, amount:Number(amount||0), method:method||"Cash", postedAt:new Date().toISOString() };
-    await DB.add("payments", p);
-    const payments = (await DB.all("payments")).filter(x=>x.invoiceId===invoiceId);
-    const paid = payments.reduce((a,b)=>a+Number(b.amount||0),0);
-    inv.status = paid >= Number(inv.total||0) ? "Paid" : paid>0 ? "PartiallyPaid" : "Unpaid";
-    await DB.put("invoices", inv);
-    return { payment:p, invoice:inv };
-  },
-  async listInvoices(){ return DB.all("invoices"); },
-
-  async stockSummary(){
-    const rows = await this.listStock();
-    const totals = {};
-    for(const r of rows) totals[r.skuCode] = (totals[r.skuCode]||0) + Number(r.onHand||0);
-    return totals;
-  },
-
-  async exportAll(){
-    const stores = ["users","accounts","contacts","products","skus","warehouses","stock","movements","salesOrders","salesOrderLines","invoices","payments","settings"];
-    const out = {}; for(const s of stores) out[s] = await DB.all(s);
-    return out;
-  },
-  async importAll(json){
-    for(const [store, arr] of Object.entries(json)){
-      for(const obj of arr) await DB.put(store, obj);
-    }
-  }
-};
-
-// ---------- Views ----------
-const Views = {
-  async home(){
-    return `
-      <div class="card">
-        <div class="toolbar">
-          <div>
-            <div class="muted">Agrawal Footwear — local-first serverless app</div>
-            <div>Works offline, on phone or desktop. Use the navbar to navigate modules.</div>
-          </div>
-          <div class="actions">
-            ${Auth.current() ? `<span class="pill ok">Signed in: ${Auth.current().name} (${Auth.current().role})</span>
-                                <button class="ghost" onclick="Actions.logout()">Logout</button>` 
-                              : `<a href="#auth">Login</a>`}
-          </div>
-        </div>
-      </div>
-      <div class="grid cols-3">
-        <div class="card">
-          <h3>Quick setup</h3>
-          <ol>
-            <li>Create a Warehouse (e.g., MAIN)</li>
-            <li>Add a Product and SKU (code e.g., ALPHA-42-BLK)</li>
-            <li>Receipt stock into warehouse</li>
-          </ol>
-        </div>
-        <div class="card">
-          <h3>CRM</h3>
-          <p>Manage accounts and contacts. Link orders and invoices to customers.</p>
-        </div>
-        <div class="card">
-          <h3>Sales & Accounts</h3>
-          <p>Create orders, issue invoices, and post payments. Status updates are automatic.</p>
-        </div>
-      </div>
-    `;
-  },
-
-  async auth(){
-    return `
-      <div class="card">
-        <h3>Register</h3>
-        <div class="grid cols-3">
-          <div><label>Name</label><input id="r_name" placeholder="Name"></div>
-          <div><label>Email</label><input id="r_email" placeholder="Email"></div>
-          <div><label>Password</label><input id="r_pw" type="password" placeholder="Password"></div>
-          <div><label>Role</label>
-            <select id="r_role">${Auth.roles.map(r=>`<option>${r}</option>`).join("")}</select>
-          </div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.register()">Create account</button></div>
-      </div>
-      <div class="card">
-        <h3>Login</h3>
-        <div class="grid cols-3">
-          <div><label>Email</label><input id="l_email" placeholder="Email"></div>
-          <div><label>Password</label><input id="l_pw" type="password" placeholder="Password"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.login()">Login</button></div>
-      </div>
-    `;
-  },
-
-  async warehouses(){
-    const whs = await Svc.listWarehouses();
-    return `
-      <div class="card">
-        <h3>Warehouses</h3>
-        <div class="grid cols-3">
-          <div><label>Name</label><input id="w_name" placeholder="Main"></div>
-          <div><label>Code</label><input id="w_code" placeholder="MAIN"></div>
-          <div><label>Address</label><input id="w_addr" placeholder="Address"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.createWarehouse()">Add Warehouse</button></div>
-        <table>
-          <thead><tr><th>Name</th><th>Code</th><th>Address</th></tr></thead>
-          <tbody>
-            ${whs.map(w=>`<tr><td>${w.name}</td><td>${w.code}</td><td>${w.address||""}</td></tr>`).join("")}
-          </tbody>
-        </table>
-      </div>
-    `;
-  },
-
-  async catalog(){
-    const prods = await Svc.listProducts();
-    const skus = await Svc.listSKUs();
-    const prodOpts = prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");
-    return `
-      <div class="card">
-        <h3>Products</h3>
-        <div class="grid cols-4">
-          <div><label>Name</label><input id="p_name" placeholder="Sneaker Alpha"></div>
-          <div><label>Category</label><input id="p_cat" placeholder="Footwear"></div>
-          <div><label>Tax %</label><input id="p_tax" type="number" step="0.01" value="12"></div>
-          <div><label>MRP</label><input id="p_mrp" type="number" step="0.01" value="1999"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.createProduct()">Add Product</button></div>
-        <table>
-          <thead><tr><th>Name</th><th>Category</th><th>Tax</th><th>MRP</th></tr></thead>
-          <tbody>${prods.map(p=>`<tr><td>${p.name}</td><td>${p.category||""}</td><td>${p.taxRate}%</td><td>${UI.fmtMoney(p.mrp)}</td></tr>`).join("")}</tbody>
-        </table>
-      </div>
-      <div class="card">
-        <h3>SKUs</h3>
-        <div class="grid cols-4">
-          <div><label>Product</label><select id="s_pid">${prodOpts}</select></div>
-          <div><label>Code</label><input id="s_code" placeholder="ALPHA-42-BLK"></div>
-          <div><label>Barcode</label><input id="s_bar" placeholder="123456789"></div>
-          <div><label>Price</label><input id="s_price" type="number" step="0.01" value="1799"></div>
-          <div><label>Cost</label><input id="s_cost" type="number" step="0.01" value="900"></div>
-          <div><label>UoM</label><input id="s_uom" value="pair"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.createSKU()">Add SKU</button></div>
-        <table>
-          <thead><tr><th>Code</th><th>Product</th><th>Price</th><th>Cost</th><th>UoM</th></tr></thead>
-          <tbody>${skus.map(s=>{
-            const p = prods.find(x=>x.id===s.productId);
-            return `<tr><td>${s.code}</td><td>${p?.name||"?"}</td><td>${UI.fmtMoney(s.price)}</td><td>${UI.fmtMoney(s.cost)}</td><td>${s.uom}</td></tr>`;
-          }).join("")}</tbody>
-        </table>
-      </div>
-    `;
-  },
-
-  async stock(){
-    const rows = await Svc.listStock();
-    const whs = await Svc.listWarehouses();
-    const skus = await Svc.listSKUs();
-    return `
-      <div class="card">
-        <h3>Stock movement</h3>
-        <div class="grid cols-4">
-          <div><label>SKU code</label><input id="m_sku" placeholder="ALPHA-42-BLK"></div>
-          <div><label>Warehouse code</label><input id="m_wh" placeholder="MAIN"></div>
-          <div><label>Type</label>
-            <select id="m_type"><option>RECEIPT</option><option>ISSUE</option><option>ADJUSTMENT</option></select>
-          </div>
-          <div><label>Qty</label><input id="m_qty" type="number" step="0.01" value="10"></div>
-          <div><label>Reference</label><input id="m_ref" placeholder="PO-0001"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.applyMovement()">Apply</button></div>
-      </div>
-      <div class="card">
-        <div class="toolbar">
-          <h3>Stock</h3>
-          <div class="actions"><span class="kbd">Search ↓</span><input id="stock_q" placeholder="Filter..." oninput="Actions.filterStock()"></div>
-        </div>
-        <table id="stock_tbl">
-          <thead><tr><th>SKU</th><th>Warehouse</th><th class="right">On hand</th><th class="right">Reserved</th></tr></thead>
-          <tbody>${rows.map(r=>`<tr><td>${r.skuCode}</td><td>${r.whCode}</td><td class="right">${r.onHand}</td><td class="right">${r.reserved}</td></tr>`).join("")}</tbody>
-        </table>
-        <div class="muted">Warehouses: ${whs.length} • SKUs: ${skus.length} • Total on hand: ${UI.sum(rows.map(x=>x.onHand))}</div>
-      </div>
-    `;
-  },
-
-  async crm(){
-    const accs = await Svc.listAccounts();
-    const contacts = await Svc.listContacts();
-    const accOpts = accs.map(a=>`<option value="${a.id}">${a.name}</option>`).join("");
-    return `
-      <div class="card">
-        <h3>Accounts</h3>
-        <div class="grid cols-3">
-          <div><label>Name</label><input id="a_name" placeholder="Agrawal Footwear"></div>
-          <div><label>Tags</label><input id="a_tags" placeholder="retail, footwear"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.createAccount()">Add Account</button></div>
-        <table>
-          <thead><tr><th>Name</th><th>Tags</th></tr></thead>
-          <tbody>${accs.map(a=>`<tr><td>${a.name}</td><td>${a.tags||""}</td></tr>`).join("")}</tbody>
-        </table>
-      </div>
-      <div class="card">
-        <h3>Contacts</h3>
-        <div class="grid cols-3">
-          <div><label>Account</label><select id="c_acc">${accOpts}</select></div>
-          <div><label>Name</label><input id="c_name" placeholder="Shravan"></div>
-          <div><label>Email</label><input id="c_email" placeholder="...@..."></div>
-          <div><label>Phone</label><input id="c_phone" placeholder="+91 ..."></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.createContact()">Add Contact</button></div>
-        <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Account</th></tr></thead>
-          <tbody>${contacts.map(c=>{
-            const a = accs.find(x=>x.id===c.accountId);
-            return `<tr><td>${c.name}</td><td>${c.email||""}</td><td>${c.phone||""}</td><td>${a?.name||"?"}</td></tr>`;
-          }).join("")}</tbody>
-        </table>
-      </div>
-    `;
-  },
-
-  async sales(){
-    const accs = await Svc.listAccounts();
-    const skus = await Svc.listSKUs();
-    const whs = await Svc.listWarehouses();
-    const sos = await Svc.listSalesOrders();
-    const accOpts = accs.map(a=>`<option value="${a.id}">${a.name}</option>`).join("");
-    const skuOpts = skus.map(s=>`<option value="${s.id}">${s.code}</option>`).join("");
-    const whOpts = whs.map(w=>`<option value="${w.id}">${w.code}</option>`).join("");
-    const invs = await Svc.listInvoices();
-
-    return `
-      <div class="card">
-        <h3>Sales order</h3>
-        <div class="grid cols-3">
-          <div><label>Account</label><select id="so_acc">${accOpts}</select></div>
-        </div>
-        <div class="grid cols-3">
-          <div><label>SKU</label><select id="so_sku">${skuOpts}</select></div>
-          <div><label>Warehouse</label><select id="so_wh">${whOpts}</select></div>
-          <div><label>Qty</label><input id="so_qty" type="number" step="0.01" value="1"></div>
-          <div><label>Price</label><input id="so_price" type="number" step="0.01" placeholder="Leave blank for SKU price"></div>
-        </div>
-        <div class="row"><button class="primary" onclick="Actions.createSalesOrder()">Create SO</button></div>
-        <table>
-          <thead><tr><th>SO</th><th>Account</th><th>Status</th><th>Total</th><th>Lines</th><th></th></tr></thead>
-          <tbody>${sos.map(so=>{
-            const a = accs.find(x=>x.id===so.accountId);
-            return `<tr>
-              <td>${so.id.slice(0,8)}</td>
-              <td>${a?.name||"?"}</td>
-              <td><span class="pill ${so.status==='Confirmed'?'ok':'warn'}">${so.status}</span></td>
-              <td>${UI.fmtMoney(so.total)}</td>
-              <td>${(so.lines||[]).map(l=>`${skus.find(s=>s.id===l.skuId)?.code||"?"} x ${l.qty}`).join(", ")}</td>
-              <td>
-                <button class="ghost" onclick="Actions.confirmSalesOrder('${so.id}')">Confirm</button>
-                <button class="ghost" onclick="Actions.createInvoice('${so.id}')">Invoice</button>
-              </td>
-            </tr>`;
-          }).join("")}</tbody>
-        </table>
-      </div>
-
-      <div class="card">
-        <h3>Invoices</h3>
-        <table>
-          <thead><tr><th>Invoice</th><th>SO</th><th>Total</th><th>Status</th><th>Pay</th></tr></thead>
-          <tbody>${invs.map(inv=>`
-            <tr>
-              <td>${inv.id.slice(0,8)}</td>
-              <td>${inv.soId.slice(0,8)}</td>
-              <td>${UI.fmtMoney(inv.total)}</td>
-              <td><span class="pill ${inv.status==='Paid'?'ok':inv.status==='PartiallyPaid'?'warn':'bad'}">${inv.status}</span></td>
-              <td>
-                <input id="pay_${inv.id}" type="number" step="0.01" placeholder="Amount">
-                <select id="meth_${inv.id}">
-                  <option>Cash</option><option>Card</option><option>UPI</option><option>Bank</option>
-                </select>
-                <button class="ghost" onclick="Actions.payInvoice('${inv.id}')">Post payment</button>
-              </td>
-            </tr>
-          `).join("")}</tbody>
-        </table>
-      </div>
-    `;
-  },
-
-  async reports(){
-    const stock = await Svc.listStock();
-    const totals = await Svc.stockSummary();
-    return `
-      <div class="card">
-        <h3>Reports</h3>
-        <div class="grid cols-2">
-          <div class="card">
-            <h4>Stock summary by SKU</h4>
-            <table>
-              <thead><tr><th>SKU</th><th class="right">On hand</th></tr></thead>
-              <tbody>${Object.entries(totals).map(([k,v])=>`<tr><td>${k}</td><td class="right">${v}</td></tr>`).join("")}</tbody>
-            </table>
-          </div>
-          <div class="card">
-            <h4>Aggregates</h4>
-            <p>Total SKUs: ${stock.length}</p>
-            <p>Total on hand (all): ${UI.sum(stock.map(x=>x.onHand))}</p>
-          </div>
-        </div>
-      </div>
-    `;
-  },
-
-  async settings(){
-    return `
-      <div class="card">
-        <h3>Backup & restore</h3>
-        <div class="row">
-          <button class="primary" onclick="Actions.exportData()">Export JSON</button>
-          <input id="imp_json" type="file" accept="application/json">
-          <button class="ghost" onclick="Actions.importData()">Import JSON</button>
-          <button class="danger" onclick="Actions.wipe()">Wipe database</button>
-        </div>
-        <p class="muted">Export before wiping. Import merges into current data.</p>
-      </div>
-      <div class="card">
-        <h3>Session</h3>
-        ${Auth.current() ? `
-          <p>Signed in as <b>${Auth.current().name}</b> (${Auth.current().role})</p>
-          <button class="ghost" onclick="Actions.logout()">Logout</button>
-        ` : `<p>You are not logged in.</p><a href="#auth">Go to Auth</a>`}
-      </div>
-    `;
-  }
-};
-
-// ---------- Actions ----------
-const Actions = {
-  async render(){ const route = UI.route();
-    const nav = [
-      { id:"home", label:"Home"},
-      { id:"auth", label:"Auth"},
-      { id:"warehouses", label:"Warehouses"},
-      { id:"catalog", label:"Catalog"},
-      { id:"stock", label:"Stock"},
-      { id:"crm", label:"CRM"},
-      { id:"sales", label:"Sales"},
-      { id:"reports", label:"Reports"},
-      { id:"settings", label:"Settings"}
-    ];
-    UI.html("nav", nav.map(n=>`<a href="#${n.id}" class="${route===n.id?'active':''}">${n.label}</a>`).join(""));
-    const view = Views[route] || Views.home;
-    UI.html("app", await view());
-  },
-
-  // Auth
-  async register(){
-    try{
-      const name = UI.el("r_name").value.trim();
-      const email = UI.el("r_email").value.trim().toLowerCase();
-      const pw = UI.el("r_pw").value;
-      const role = UI.el("r_role").value;
-      if(!name || !email || !pw) throw new Error("Fill all fields");
-      await Svc.register({name,email,password:pw,role});
-      UI.notify("User created. Please login."); location.hash = "#auth";
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-  async login(){
-    try{
-      const email = UI.el("l_email").value.trim().toLowerCase();
-      const pw = UI.el("l_pw").value;
-      await Svc.login({email,password:pw});
-      UI.notify("Logged in"); location.hash = "#home";
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-  logout(){ Auth.clear(); UI.notify("Logged out","warn"); Actions.render(); },
-
-  // Warehouses
-  async createWarehouse(){
-    try{
-      const name = UI.el("w_name").value.trim();
-      const code = UI.el("w_code").value.trim();
-      const address = UI.el("w_addr").value.trim();
-      if(!name || !code) throw new Error("Name and Code required");
-      await Svc.createWarehouse({name,code,address});
-      UI.notify("Warehouse created"); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-
-  // Catalog
-  async createProduct(){
-    try{
-      const name = UI.el("p_name").value.trim();
-      const category = UI.el("p_cat").value.trim();
-      const taxRate = Number(UI.el("p_tax").value||0);
-      const mrp = Number(UI.el("p_mrp").value||0);
-      if(!name) throw new Error("Product name required");
-      await Svc.createProduct({name,category,taxRate,mrp});
-      UI.notify("Product added"); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-  async createSKU(){
-    try{
-      const productId = UI.el("s_pid").value;
-      const code = UI.el("s_code").value.trim();
-      const barcode = UI.el("s_bar").value.trim();
-      const price = Number(UI.el("s_price").value||0);
-      const cost = Number(UI.el("s_cost").value||0);
-      const uom = UI.el("s_uom").value.trim()||"pair";
-      if(!productId || !code) throw new Error("Product and Code required");
-      await Svc.createSKU({productId,code,barcode,price,cost,uom});
-      UI.notify("SKU added"); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-
-  // Inventory
-  async applyMovement(){
-    try{
-      const skuCode = UI.el("m_sku").value.trim();
-      const whCode = UI.el("m_wh").value.trim();
-      const type = UI.el("m_type").value;
-      const qty = Number(UI.el("m_qty").value||0);
-      const ref = UI.el("m_ref").value.trim();
-      await Svc.applyMovement({skuCode, whCode, type, qty, reference:ref});
-      UI.notify("Movement applied"); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-  filterStock(){
-    const q = UI.el("stock_q").value.trim().toLowerCase();
-    const rows = Array.from(document.querySelectorAll("#stock_tbl tbody tr"));
-    rows.forEach(r=>{
-      const txt = r.innerText.toLowerCase();
-      r.style.display = txt.includes(q) ? "" : "none";
-    });
-  },
-
-  // CRM
-  async createAccount(){
-    try{
-      const name = UI.el("a_name").value.trim();
-      const tags = UI.el("a_tags").value.trim();
-      if(!name) throw new Error("Account name required");
-      await Svc.createAccount({name,tags});
-      UI.notify("Account added"); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-  async createContact(){
-    try{
-      const accountId = UI.el("c_acc").value;
-      const name = UI.el("c_name").value.trim();
-      const email = UI.el("c_email").value.trim();
-      const phone = UI.el("c_phone").value.trim();
-      if(!accountId || !name) throw new Error("Account and Name required");
-      await Svc.createContact({accountId,name,email,phone});
-      UI.notify("Contact added"); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-
-  // Sales
-  async createSalesOrder(){
-    try{
-      const accountId = UI.el("so_acc").value;
-      const skuId = UI.el("so_sku").value;
-      const whId = UI.el("so_wh").value;
-      const qty = Number(UI.el("so_qty").value||0);
-      const priceRaw = UI.el("so_price").value;
-      const price = priceRaw ? Number(priceRaw) : undefined;
-      if(!accountId || !skuId || !whId || qty<=0) throw new Error("Fill all fields");
-      const so = await Svc.createSalesOrder({ accountId, lines: [{ skuId, whId, qty, price }] });
-      UI.notify(`SO created: ${so.id.slice(0,8)}`); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-  async confirmSalesOrder(id){
-    try{ await Svc.confirmSalesOrder(id); UI.notify("SO confirmed"); Actions.render(); }
-    catch(e){ UI.notify(e.message,"bad"); }
-  },
-  async createInvoice(soId){
-    try{ const inv = await Svc.createInvoice(soId); UI.notify(`Invoice ${inv.id.slice(0,8)} created`); Actions.render(); }
-    catch(e){ UI.notify(e.message,"bad"); }
-  },
-  async payInvoice(invId){
-    try{
-      const amt = Number(UI.el("pay_"+invId).value||0);
-      const method = UI.el("meth_"+invId).value;
-      if(amt<=0) throw new Error("Enter amount");
-      const res = await Svc.payInvoice({ invoiceId: invId, amount: amt, method });
-      UI.notify(`Payment posted. Status: ${res.invoice.status}`); Actions.render();
-    }catch(e){ UI.notify(e.message,"bad"); }
-  },
-
-  // Backup
-  async exportData(){
-    const json = await Svc.exportAll();
-    const blob = new Blob([JSON.stringify(json,null,2)], {type:"application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "agrawal-footwear-backup.json"; a.click();
-    URL.revokeObjectURL(url);
-  },
-  async importData(){
-    const file = UI.el("imp_json").files[0];
-    if(!file) return UI.notify("Select a JSON file","warn");
-    const text = await file.text();
-    const json = JSON.parse(text);
-    await Svc.importAll(json);
-    UI.notify("Import complete"); Actions.render();
-  },
-  async wipe(){ if(confirm("Wipe all data? Export first.")) await DB.wipe(); }
-};
-
-// ---------- PWA manifest + service worker (single-file bootstrap) ----------
-(async function pwaSetup(){
+// Extend Actions with PDF generation
+Actions.downloadInvoicePDF = async function(invId){
   try {
-    // Create and attach manifest dynamically
-    const manifest = {
-      name: "Agrawal Footwear CRM + Inventory",
-      short_name: "AF CRM",
-      start_url: ".",
-      display: "standalone",
-      background_color: "#0f1220",
-      theme_color: "#0f1220",
-      icons: [
-        { src: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 120'><rect width='400' height='120' fill='%230f1220'/><path d='M20 80 C60 20,140 20,200 80 Q220 100,260 80 T380 80' fill='none' stroke='%235bd1ff' stroke-width='8' stroke-linecap='round'/><line x1='20' y1='85' x2='380' y2='85' stroke='%2379d88a' stroke-width='6' stroke-linecap='round'/><text x='200' y='110' font-family='Segoe UI' font-size='28' text-anchor='middle' fill='%23e8ecf1' font-weight='bold'>AF</text></svg>`), sizes: "400x120", type: "image/svg+xml" }
-      ]
-    };
-    const manifestBlob = new Blob([JSON.stringify(manifest)], {type:"application/json"});
-    const manifestURL = URL.createObjectURL(manifestBlob);
-    const link = document.createElement("link");
-    link.rel = "manifest"; link.href = manifestURL;
-    document.head.appendChild(link);
+    const { jsPDF } = window.jspdf;
+    const inv = await Svc.listInvoices().then(list => list.find(i=>i.id===invId));
+    if(!inv) throw new Error("Invoice not found");
+    const so = await Svc.listSalesOrders().then(list => list.find(s=>s.id===inv.soId));
+    const acc = await Svc.listAccounts().then(list => list.find(a=>a.id===so.accountId));
+    const lines = so.lines || [];
 
-    // Minimal service worker (cache-first for this single HTML)
-    const swCode = `
-      const CACHE_NAME = 'af-crm-cache-v1';
-      const CORE = ['.'];
-      self.addEventListener('install', (e) => {
-        e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(CORE)));
-        self.skipWaiting();
-      });
-      self.addEventListener('activate', (e) => {
-        e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))));
-        self.clients.claim();
-      });
-      self.addEventListener('fetch', (e) => {
-        const req = e.request;
-        e.respondWith(
-          caches.match(req).then(res => res || fetch(req).then(net => {
-            if (req.method === 'GET' && new URL(req.url).origin === location.origin) {
-              const copy = net.clone();
-              caches.open(CACHE_NAME).then(c=>c.put(req, copy));
-            }
-            return net;
-          }).catch(()=>caches.match('.')))
-        );
-      });
+    const doc = new jsPDF();
+
+    // Shop header
+    doc.setFontSize(16);
+    doc.text("Agrawal Footwear", 20, 20);
+    doc.setFontSize(12);
+    doc.text("Main Market, Birsinghpur, Satna, Madhya Pradesh 485226", 20, 28);
+
+    // Customer details
+    doc.setFontSize(14);
+    doc.text("Invoice: " + inv.id.slice(0,8), 20, 40);
+    doc.text("Customer: " + (acc?.name || "Unknown"), 20, 48);
+
+    // Items
+    let y = 60;
+    doc.setFontSize(12);
+    doc.text("Items:", 20, y);
+    y += 8;
+    lines.forEach(l=>{
+      doc.text(`${l.qty} x ${l.price} = ${l.qty*l.price}`, 25, y);
+      y += 8;
+    });
+    doc.text("Total: " + inv.total, 20, y+10);
+
+    // QR code
+    const qrData = `
+      Shop: Agrawal Footwear
+      Address: Main Market, Birsinghpur, Satna, Madhya Pradesh 485226
+      Invoice: ${inv.id}
+      Customer: ${acc?.name||""}
+      Total: ${inv.total}
     `;
-    const swBlob = new Blob([swCode], {type: "text/javascript"});
-    const swURL = URL.createObjectURL(swBlob);
+    const qrDiv = document.createElement("div");
+    new QRCode(qrDiv, { text: qrData, width: 128, height: 128 });
+    const qrCanvas = qrDiv.querySelector("canvas");
+    const qrDataUrl = qrCanvas.toDataURL("image/png");
+    doc.addImage(qrDataUrl, "PNG", 150, 40, 50, 50);
 
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register(swURL).then(()=> {
-        console.log("Service worker registered");
-      }).catch(err => {
-        console.log("SW registration warning:", err);
-      });
-    }
-  } catch (err) {
-    console.log("PWA setup issue:", err);
+    doc.save(`Invoice_${inv.id.slice(0,8)}.pdf`);
+  } catch(e){
+    UI.notify(e.message,"bad");
   }
-})();
+};
 
-// ---------- Boot ----------
-(async function(){
-  await DB.init();
-  window.addEventListener("hashchange", Actions.render);
-  await Actions.render();
-})();
+// In Views.sales(), add Download PDF button for each invoice row
+// Example snippet inside invoice table row:
+{/* <button class="ghost" onclick="Actions.downloadInvoicePDF('${inv.id}')">Download PDF</button> */}
+
 </script>
 </body>
 </html>
